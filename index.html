@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="数字计算器">
+<title>数字计算器</title>
+<style>
+  :root{ --c1:#e10000; --c2:#0a44d6; --grid:#d4d4d4; --c3:#0a8f3c; }
+  *{ box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  body{ margin:0; padding:10px; font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;
+        color:#222; background:#f5f5f7; }
+  h1{ font-size:18px; margin:0 0 8px; }
+  .hint{ font-size:12px; color:#666; margin:2px 0 6px; }
+  textarea{ width:100%; height:84px; font-size:18px; font-family:Consolas,monospace;
+            padding:8px; border:1px solid #bbb; border-radius:8px; resize:vertical; }
+  .btns{ margin:8px 0; display:flex; gap:8px; flex-wrap:wrap; }
+  button{ font-size:16px; padding:9px 18px; border:0; border-radius:8px; color:#fff; background:#2b6cff; }
+  button.sec{ background:#888; }
+  #status{ font-size:13px; margin:4px 0 10px; min-height:18px; }
+  .panel{ background:#fff; border:1px solid #e2e2e2; border-radius:10px; padding:8px; margin-bottom:12px; }
+  .panel h2{ font-size:14px; margin:0 0 6px; color:#444; }
+  .scroll{ overflow-x:auto; -webkit-overflow-scrolling:touch; }
+  canvas{ display:block; background:#fff; }
+  #detail{ max-height:260px; overflow-y:auto; font-family:Consolas,monospace; font-size:13px; }
+  #detail .row{ padding:3px 0; border-bottom:1px solid #f0f0f0; white-space:nowrap; }
+  button.del{ background:#d9534f; color:#fff; font-size:12px; padding:2px 8px; border:0;
+              border-radius:5px; margin-right:6px; }
+  b.red{ color:var(--c1); } b.blue{ color:var(--c2); } b.green{ color:var(--c3); }
+</style>
+</head>
+<body>
+  <h1>数字计算器</h1>
+  <div class="hint">输入数字序列，用空格或逗号分隔，然后点击「计算」。</div>
+  <textarea id="input" placeholder="例如： 1, 5, 6, 1, 3, 4, 3, 3"></textarea>
+  <div class="btns">
+    <button id="calcBtn" onclick="calculate()">计算</button>
+    <button id="delFirstBtn" class="sec" onclick="delFirst()">删除第一个</button>
+    <button id="clearBtn" class="sec" onclick="clearAll()">清空</button>
+  </div>
+  <div id="status">就绪，输入后点「计算」。</div>
+
+  <div class="panel"><h2>走势图</h2><div class="scroll" id="chartWrap"><canvas id="chart"></canvas></div></div>
+  <div class="panel"><h2>明细</h2><div id="detail"></div></div>
+
+<script>
+"use strict";
+var C1="#e10000", C2="#0a44d6", GRID="#d4d4d4", CELL=24, ROWS=6;
+var lastMain=null, lastDetails=null, lastArr=[];
+
+// ===== core =====
+function val(c){
+  if(c==="A") return 1;
+  if(c==="10"||c==="J"||c==="Q"||c==="K") return 0;
+  return parseInt(c,10);
+}
+function parse(raw){
+  var s=raw.toUpperCase(), out=[], i=0;
+  while(i<s.length){
+    var ch=s[i];
+    if(ch==="1" && s[i+1]==="0"){ out.push("10"); i+=2; }
+    else if(ch==="A" || (ch>="1"&&ch<="9") || ch==="J"||ch==="Q"||ch==="K"){ out.push(ch); i++; }
+    else i++;
+  }
+  return out;
+}
+function cmp(p,q){ return p>q?"b":(q>p?"a":"t"); }   // a / b / t
+
+function step(arr,i){
+  var n=arr.length;
+  if(i+4>n) return null;
+  var g1=[arr[i],arr[i+2]], g2=[arr[i+1],arr[i+3]], used=4;
+  var p=(val(g1[0])+val(g1[1]))%10;
+  var q=(val(g2[0])+val(g2[1]))%10;
+  if(p>=8||q>=8){
+    var r0=cmp(p,q);
+    return {res:r0,used:used,detail:{g1:g1.slice(),g2:g2.slice(),p:p,q:q,res:r0,note:"直接判定"}};
+  }
+  var notes=[], t=null;
+  if(p<=5){
+    if(i+used>=n) return null;
+    var t1=arr[i+used]; t=val(t1); used++;
+    g1.push(t1); p=(p+t)%10; notes.push("乙+"+t1);
+  } else notes.push("乙不加");
+  var more;
+  if(t===null){ more=(q<=5); }
+  else if(q<=2) more=true;
+  else if(q===3) more=(t!==8);
+  else if(q===4) more=(t>=2&&t<=7);
+  else if(q===5) more=(t>=4&&t<=7);
+  else if(q===6) more=(t===6||t===7);
+  else more=false;
+  if(more){
+    if(i+used>=n) return null;
+    var t2=arr[i+used]; used++;
+    g2.push(t2); q=(q+val(t2))%10; notes.push("甲+"+t2);
+  } else notes.push("甲不加");
+  var r=cmp(p,q);
+  return {res:r,used:used,detail:{g1:g1.slice(),g2:g2.slice(),p:p,q:q,res:r,note:notes.join(" / ")}};
+}
+function run(arr){
+  var results=[], details=[], i=0;
+  while(true){
+    var o=step(arr,i); if(!o) break;
+    i+=o.used; o.detail.cum=i;
+    results.push(o.res); details.push(o.detail);
+  }
+  return {results:results,details:details,leftover:arr.length-i};
+}
+function buildChart(results,rows){
+  rows=rows||ROWS;
+  var grid={};
+  if(!results.length) return {grid:grid,maxCol:0};
+  var curC=0,curR=0,smax=0,maxCol=0;
+  grid["0,0"]=results[0]; var last=results[0];
+  for(var k=1;k<results.length;k++){
+    var s=results[k];
+    if(s===last){
+      var nr=curR+1;
+      if(nr<rows && grid[curC+","+nr]===undefined){ curR=nr; }
+      else { var nc=curC+1; while(grid[nc+","+curR]!==undefined) nc++; curC=nc; }
+      if(curC>smax) smax=curC;
+    } else {
+      var nc2=smax+1; while(grid[nc2+",0"]!==undefined) nc2++;
+      curC=nc2; curR=0; smax=nc2; last=s;
+    }
+    grid[curC+","+curR]=s; if(curC>maxCol) maxCol=curC;
+  }
+  return {grid:grid,maxCol:maxCol};
+}
+
+// ===== ui =====
+function setupCanvas(canvas,cssW,cssH){
+  var dpr=window.devicePixelRatio||1;
+  canvas.width=Math.round(cssW*dpr); canvas.height=Math.round(cssH*dpr);
+  canvas.style.width=cssW+"px"; canvas.style.height=cssH+"px";
+  var ctx=canvas.getContext("2d");
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  ctx.clearRect(0,0,cssW,cssH);
+  return ctx;
+}
+function drawGrid(ctx,cols,rows,cell){
+  ctx.strokeStyle=GRID; ctx.lineWidth=1;
+  for(var c=0;c<=cols;c++){ ctx.beginPath(); ctx.moveTo(c*cell+0.5,0); ctx.lineTo(c*cell+0.5,rows*cell); ctx.stroke(); }
+  for(var r=0;r<=rows;r++){ ctx.beginPath(); ctx.moveTo(0,r*cell+0.5); ctx.lineTo(cols*cell,r*cell+0.5); ctx.stroke(); }
+}
+function mark(ctx,c,r,cell,color){
+  var pad=4, x=c*cell+cell/2, y=r*cell+cell/2, rad=cell/2-pad;
+  ctx.beginPath(); ctx.arc(x,y,rad,0,2*Math.PI);
+  ctx.strokeStyle=color; ctx.lineWidth=2; ctx.stroke();
+}
+function drawChart(main){
+  var cont=document.getElementById("chartWrap"), canvas=document.getElementById("chart");
+  var res=buildChart(main), grid=res.grid;
+  var contentCols=main.length?res.maxCol+1:0;
+  var minCols=Math.max(Math.ceil(cont.clientWidth/CELL),1);
+  var cols=Math.max(contentCols,minCols);
+  var ctx=setupCanvas(canvas, cols*CELL, ROWS*CELL);
+  drawGrid(ctx,cols,ROWS,CELL);
+  for(var key in grid){ if(grid.hasOwnProperty(key)){
+    var p=key.split(","), c=+p[0], r=+p[1];
+    mark(ctx,c,r,CELL, grid[key]==="a"?C1:C2);
+  }}
+  cont.scrollLeft = contentCols>minCols ? cont.scrollWidth : 0;
+}
+function drawDetail(details){
+  var labels={a:"甲",b:"乙",t:"平"}, cls={a:"red",b:"blue",t:"green"};
+  var html="";
+  for(var i=0;i<details.length;i++){
+    var d=details[i];
+    html+='<div class="row"><button class="del" onclick="delThrough('+i+')">删除</button>第'+
+      (i+1)+'组　乙 ['+d.g1.join(" ")+"]="+d.p+
+      "　甲 ["+d.g2.join(" ")+"]="+d.q+' → <b class="'+cls[d.res]+'">'+labels[d.res]+
+      "</b>　（"+d.note+"）</div>";
+  }
+  document.getElementById("detail").innerHTML=html;
+}
+
+// ===== actions =====
+function setStatus(msg){ document.getElementById("status").textContent=msg; }
+function calculate(){
+  var raw=document.getElementById("input").value;
+  var arr=parse(raw);
+  if(!arr.length){ alert("请输入数字序列。"); return; }
+  var pr=run(arr);
+  var main=pr.results.filter(function(r){return r!=="t";});
+  var na=main.filter(function(r){return r==="a";}).length;
+  var nb=main.filter(function(r){return r==="b";}).length;
+  var nt=pr.results.filter(function(r){return r==="t";}).length;
+  setStatus("共 "+pr.results.length+" 组：甲 "+na+" / 乙 "+nb+" / 平 "+nt+"；剩余 "+pr.leftover+" 个。");
+  lastMain=main; lastDetails=pr.details; lastArr=arr;
+  drawChart(main); drawDetail(pr.details);
+}
+function clearAll(){
+  document.getElementById("input").value="";
+  lastMain=null; lastDetails=null; lastArr=[];
+  drawChart([]); drawDetail([]);
+  setStatus("已清空。");
+}
+function delThrough(i){
+  if(!lastDetails||!lastDetails[i]) return;
+  var rem=lastArr.slice(lastDetails[i].cum);
+  document.getElementById("input").value=rem.join(", ");
+  if(rem.length) calculate(); else clearAll();
+}
+function delFirst(){
+  var arr=parse(document.getElementById("input").value);
+  if(!arr.length) return;
+  arr.shift();
+  document.getElementById("input").value=arr.join(", ");
+  if(arr.length) calculate(); else clearAll();
+}
+function redrawAll(){ drawChart(lastMain ? lastMain : []); }
+window.addEventListener("resize", function(){ setTimeout(redrawAll,100); });
+
+drawChart([]);
+</script>
+</body>
+</html>
