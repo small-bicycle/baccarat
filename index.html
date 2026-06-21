@@ -19,15 +19,16 @@
   .btns{ margin:8px 0; display:flex; gap:8px; flex-wrap:wrap; }
   button{ font-size:16px; padding:9px 18px; border:0; border-radius:8px; color:#fff; background:#2b6cff; }
   button.sec{ background:#888; }
+  button.undo{ background:#e08a00; }
   #status{ font-size:13px; margin:4px 0 10px; min-height:18px; }
   .panel{ background:#fff; border:1px solid #e2e2e2; border-radius:10px; padding:8px; margin-bottom:12px; }
   .panel h2{ font-size:14px; margin:0 0 6px; color:#444; }
   .scroll{ overflow-x:auto; -webkit-overflow-scrolling:touch; }
   canvas{ display:block; background:#fff; }
-  #detail{ max-height:260px; overflow-y:auto; font-family:Consolas,monospace; font-size:13px; }
-  #detail .row{ padding:3px 0; border-bottom:1px solid #f0f0f0; white-space:nowrap; }
-  button.del{ background:#d9534f; color:#fff; font-size:12px; padding:2px 8px; border:0;
-              border-radius:5px; margin-right:6px; }
+  #detail{ max-height:360px; overflow-y:auto; font-family:Consolas,monospace; font-size:16px; }
+  #detail .row{ padding:7px 0; border-bottom:1px solid #f0f0f0; white-space:nowrap; }
+  button.del{ background:#d9534f; color:#fff; font-size:14px; padding:5px 12px; border:0;
+              border-radius:5px; margin-right:8px; }
   b.red{ color:var(--c1); } b.blue{ color:var(--c2); } b.green{ color:var(--c3); }
 </style>
 </head>
@@ -38,6 +39,7 @@
   <div class="btns">
     <button id="calcBtn" onclick="calculate()">计算</button>
     <button id="delFirstBtn" class="sec" onclick="delFirst()">删除第一个</button>
+    <button id="undoBtn" class="undo" onclick="undo()">撤回删除</button>
     <button id="clearBtn" class="sec" onclick="clearAll()">清空</button>
   </div>
   <div id="status">就绪，输入后点「计算」。</div>
@@ -48,7 +50,7 @@
 <script>
 "use strict";
 var C1="#e10000", C2="#0a44d6", GRID="#d4d4d4", CELL=24, ROWS=6;
-var lastMain=null, lastDetails=null, lastArr=[];
+var lastMain=null, lastDetails=null, lastArr=[], undoStack=[];
 
 // ===== core =====
 function val(c){
@@ -180,10 +182,13 @@ function drawDetail(details){
 
 // ===== actions =====
 function setStatus(msg){ document.getElementById("status").textContent=msg; }
-function calculate(){
-  var raw=document.getElementById("input").value;
-  var arr=parse(raw);
-  if(!arr.length){ alert("请输入数字序列。"); return; }
+function render(){
+  var arr=parse(document.getElementById("input").value);
+  if(!arr.length){
+    lastMain=null; lastDetails=null; lastArr=[];
+    drawChart([]); drawDetail([]); setStatus("（空）");
+    return;
+  }
   var pr=run(arr);
   var main=pr.results.filter(function(r){return r!=="t";});
   var na=main.filter(function(r){return r==="a";}).length;
@@ -193,24 +198,32 @@ function calculate(){
   lastMain=main; lastDetails=pr.details; lastArr=arr;
   drawChart(main); drawDetail(pr.details);
 }
+function calculate(){
+  if(!parse(document.getElementById("input").value).length){ alert("请输入数字序列。"); return; }
+  render();
+}
+function pushUndo(){ undoStack.push(document.getElementById("input").value); if(undoStack.length>200) undoStack.shift(); }
+function setInput(text){ document.getElementById("input").value=text; render(); }
 function clearAll(){
+  pushUndo();
   document.getElementById("input").value="";
   lastMain=null; lastDetails=null; lastArr=[];
-  drawChart([]); drawDetail([]);
-  setStatus("已清空。");
+  drawChart([]); drawDetail([]); setStatus("已清空（可撤回）。");
 }
 function delThrough(i){
   if(!lastDetails||!lastDetails[i]) return;
-  var rem=lastArr.slice(lastDetails[i].cum);
-  document.getElementById("input").value=rem.join(", ");
-  if(rem.length) calculate(); else clearAll();
+  pushUndo();
+  setInput(lastArr.slice(lastDetails[i].cum).join(", "));
 }
 function delFirst(){
   var arr=parse(document.getElementById("input").value);
   if(!arr.length) return;
-  arr.shift();
-  document.getElementById("input").value=arr.join(", ");
-  if(arr.length) calculate(); else clearAll();
+  pushUndo();
+  setInput(arr.slice(1).join(", "));
+}
+function undo(){
+  if(!undoStack.length){ setStatus("没有可撤回的操作。"); return; }
+  setInput(undoStack.pop());
 }
 function redrawAll(){ drawChart(lastMain ? lastMain : []); }
 window.addEventListener("resize", function(){ setTimeout(redrawAll,100); });
